@@ -18,7 +18,6 @@ struct  s_cmd
 void	exec_cmd(char *envp[], t_cmd *cmd, int *fds)
 {
 	pid_t	pid;
-	int		error;
 	pid = 1;
 	if (cmd)
 		pid = fork();
