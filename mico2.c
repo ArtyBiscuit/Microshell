@@ -65,36 +65,51 @@ int parce(t_cmd **lst, char **argc){
 
 // exec
 
-void exec_cmd(t_cmd *lst, char **envp, int *fds){
+void exec_cmd(t_cmd *lst, char **envp, int *fds, int fd_tmp){
     pid_t pid = 1;
     if(lst)
         pid = fork();
     if(!pid){
-        if(fds[0] != -1)
-            dup2(fds[0], 0);
-        dup2(fds[1], 1);
+        if (fds[0] != -1)
+			close(fds[0]);
+        dup2(fd_tmp, 0);
         execve(lst->cmd[0], lst->cmd, envp);
-        exit;
+        exit(0);
     }
 }
 
 int exec(t_cmd *lst, char **envp){
     int fds[2];
+    int	fd_tmp = 0;
 
     while (lst->back){
         if(pipe(fds) < 0)
             return (1);
-        exec_cmd(lst, envp, fds);
+        exec_cmd(lst, envp, fds, fd_tmp);
         wait(NULL);
-        close(fds[0]);
+        close(fds[1]);
+		close(fd_tmp);
+		fd_tmp = fds[0];
         lst = lst->back;
     }
     fds[0] = -1;
-    exec_cmd(lst, envp, fds);
+    exec_cmd(lst, envp, fds, fd_tmp);
+    close(fd_tmp);
+	close(fds[1]);
     return (0);
 }
 
 //
+
+void free_lst(t_cmd *lst){
+    while(lst->back){
+        lst = lst->back;
+        free(lst->next->cmd);
+        free(lst->next);
+    }
+    free(lst->cmd);
+    free(lst);
+}
 
 int main(int argv, char **argc, char **envp){
     int index = 0;
@@ -121,5 +136,6 @@ int main(int argv, char **argc, char **envp){
             }
         }
         exec(lst, envp);
+        free_lst(lst);
     }
 }
