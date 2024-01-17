@@ -2,118 +2,172 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include <sys/wait.h>
 
 typedef struct s_cmd t_cmd;
 
-struct  s_cmd
+struct s_cmd
 {
     char **cmd;
-    int nb_cmd;
     t_cmd *next;
     t_cmd *back;
 };
 
-void	exec_cmd(char *envp[], t_cmd *cmd, int *fds)
-{
-	pid_t	pid;
-	pid = 1;
-	if (cmd)
-		pid = fork();
-	if (!pid)
-	{
-        if(fds[0] != -1)
-            dup2(fds[0], 0);
-		dup2(fds[1], 1);
-		execve(cmd->cmd[0], cmd->cmd, envp);
-		exit(0);
-	}
-}
-
-int	exec_pipeline(t_cmd *cmd, char *envp[])
-{
-	int	fds[2];
-
-	while (cmd->back)
-	{
-		if (pipe(fds) < 0)
-			return (1);
-		exec_cmd(envp, cmd, fds);
-		wait(NULL);
-		close(fds[1]);
-		cmd = cmd->back;
-	}
-    exec_cmd(envp, cmd, fds);
-	return (0);
-}
-
-void lstadd(t_cmd **curent, t_cmd *new){
-    if(!*curent){
-        *curent = new;
-        return;
-    }
-    t_cmd *tmp = *curent;
-    while(tmp->back){
-        tmp = tmp->back;
-    }
-    tmp->back = new;
-    tmp->back->next = tmp;
-}
-
-int cmdlen(char **cmd){
+int ft_strlen(char *str){
     int i = 0;
-    while (cmd[i] && strcmp(cmd[i], "|") && strcmp(cmd[i], ";")){
+    while(str[i]){
         i++;
     }
     return (i);
 }
 
-int cmd_lst_create(t_cmd **cmd, char **argv){
-    t_cmd *new;
-    int nb_cmd = cmdlen(argv);
+void free_lst(t_cmd *lst){
+    if (lst){
+        while (lst->next){
+            lst = lst->next;
+        }
+        t_cmd *tmp = lst;
+        while(tmp->back){
+            free(tmp->cmd);
+            tmp = tmp->back;
+            free(tmp->next);
+        }
+        free(tmp->cmd);
+        free(tmp);
+    }
+    return;
+}
+void cd(t_cmd *lst){
+    if(!lst->cmd[1] || lst->cmd[2] != NULL){
+        write(2, "error: cd: bad arguments\n", ft_strlen("error: cd: bad arguments") + 1);
+        return;
+    }
+    if(chdir(lst->cmd[1])){
+        write(2, "error: cd: cannot change directory to ", ft_strlen("error: cd: cannot change directory to"));
+        write(2, lst->cmd[1], ft_strlen(lst->cmd[1]));
+        write(2, "\n", 1);
+    };
+}
+
+void exec_pip(t_cmd *lst, char **envp, int *fds, int *fd_tmp){
+    pid_t pid = 1;
+    
+    if(!(pid = fork())){
+        if(lst->back){
+            dup2(fds[1], 1);
+        }
+        dup2(*fd_tmp, 0);
+        close(fds[0]);
+        if(execve(lst->cmd[0], lst->cmd, envp) == -1){
+            write(2, "error: cannot execute ", ft_strlen("error: cannot execute "));
+            write(2, lst->cmd[0], ft_strlen(lst->cmd[0]));
+            write(2, "\n", 1);
+            close(fds[1]);
+            free_lst(lst);
+        }
+        exit(-1);
+    }
+}
+
+void exec(t_cmd *lst, char **envp){
+    int fds[2];
+    int fd_tmp = 0;
+
+    while(lst){
+        if(pipe(fds) < 0){
+            write(2, "error: fatal \n", ft_strlen("error: fatal \n"));
+            return;
+        }
+        if(!strcmp(lst->cmd[0], "cd"))
+            cd(lst);
+        else
+            exec_pip(lst, envp, fds, &fd_tmp);
+        wait(NULL);
+        close(fds[1]);
+        if(fd_tmp)
+            close(fd_tmp);
+        fd_tmp = fds[0];
+        lst = lst->back;
+    }
+    close(fds[0]);
+    if(fd_tmp)
+        close(fd_tmp);
+}
+
+int cmdlen(char **argc){
+    int i = 0;
+    while(argc[i] && strcmp(argc[i], "|") && strcmp(argc[i], ";")){
+        i++;
+    }
+    return (i);
+}
+
+void lstadd_back(t_cmd **current, t_cmd *new){
+    if(!(*current)){
+        *current = new;
+        return;
+    }
+    t_cmd *tmp = *current;
+    while(tmp->back){
+        tmp = tmp->back;
+    }
+    tmp->back = new;
+    new->next = tmp;
+    return;
+}
+
+
+int lst_create(t_cmd **lst, char **argc){
+    t_cmd *new = NULL;
+    int cmd_size = cmdlen(argc);
     if(!(new = malloc(sizeof(t_cmd)))){
-        //Error
+        write(2, "error: fatal \n", ft_strlen("error: fatal \n"));
     }
-    if(!(new->cmd = malloc(sizeof(char *) * nb_cmd + 1))){
-        //Error
+    new->cmd = malloc(sizeof(char *) * (cmd_size + 1));   
+    if(!new->cmd){
+        write(2, "error: fatal \n", ft_strlen("error: fatal \n"));
     }
-    new->back = NULL;
     new->next = NULL;
-    new->nb_cmd = nb_cmd;
-    while(nb_cmd != 0){
-        nb_cmd--;
-        new->cmd[nb_cmd] = argv[nb_cmd];
+    new->back = NULL;
+    int tmp = cmd_size;
+    while(tmp){
+        tmp--;
+        new->cmd[tmp] = argc[tmp];
     }
-    lstadd(cmd, new);
-    return (new->nb_cmd);
+    new->cmd[cmd_size] = NULL;
+    lstadd_back(lst, new);
+    return (cmd_size);
 }
 
 
 int main(int argv, char **argc, char **envp){
-    t_cmd *cmd;
-
-    cmd = NULL;
-    if(argv <= 1){
-        printf("Error\n");
-        return(1);
-    }
+    t_cmd *lst = NULL;
     int index = 1;
-    while (argc[index] && !strcmp(argc[index], ";")){
-        index++;
+    if (argv < 1){
+        write(2, "error: fatal \n", ft_strlen("error: fatal \n"));
+        return (1);
     }
+    if(!strcmp(argc[argv - 1], "|"))
+        return (0);
     while (argc[index]){
-        while (argc[index]){
-            index += cmd_lst_create(&cmd, &argc[index]);
-            if (argc[index] && !strcmp(argc[index], "|")){
+        while (argc[index] && !strcmp(argc[index], ";")){
+            index++;
+        }
+        while(argc[index]){
+            index += lst_create(&lst, &argc[index]);
+            if(argc[index] && !strcmp(argc[index], "|")){
                 index++;
                 continue;
             }
-            else if(argc[index]){
+            else if (argc[index]){
                 index++;
                 break;
             }
         }
-        exec_pipeline(cmd, envp);
+        exec(lst, envp);
+        if (lst){
+            free_lst(lst);
+            lst = NULL;
+        }
     }
 }
